@@ -1,1 +1,418 @@
-<h3>کون میخوام</h3>
+const RATE_LIMIT_SECONDS = 60;
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    if (request.method === "GET") {
+      return new Response(HTML, {
+        headers: {
+          "content-type": "text/html; charset=UTF-8",
+          "cache-control": "no-store"
+        }
+      });
+    }
+
+    if (request.method !== "POST" || url.pathname !== "/send") {
+      return json({ ok: false, error: "Not found" }, 404);
+    }
+
+    try {
+      const data = await request.json();
+
+      const name = String(data.name || "").trim();
+      const message = String(data.message || "").trim();
+      const website = String(data.website || "").trim();
+
+      // Honeypot
+      if (website) {
+        return json({ ok: true });
+      }
+
+      if (!name || !message) {
+        return json({
+          ok: false,
+          error: "لطفاً همه فیلدها را کامل کنید."
+        }, 400);
+      }
+
+      if (name.length > 100 || message.length > 3000) {
+        return json({
+          ok: false,
+          error: "متن واردشده بیش از حد مجاز است."
+        }, 400);
+      }
+
+      // Simple rate limit
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      const key = `rate:${ip}`;
+
+      if (env.FORM_KV) {
+        const exists = await env.FORM_KV.get(key);
+
+        if (exists) {
+          return json({
+            ok: false,
+            error: "لطفاً کمی صبر کنید و دوباره تلاش کنید."
+          }, 429);
+        }
+
+        await env.FORM_KV.put(key, "1", {
+          expirationTtl: RATE_LIMIT_SECONDS
+        });
+      }
+
+      const text =
+`📩 <b>پیام جدید سایت</b>
+
+👤 <b>نام:</b> ${escapeHTML(name)}
+
+💬 <b>پیام:</b>
+${escapeHTML(message)}
+
+🌐 <b>IP:</b> ${escapeHTML(ip)}`;
+
+      const telegramURL =
+        `https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`;
+
+      const telegramResponse = await fetch(telegramURL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          chat_id: env.CHAT_ID,
+          text,
+          parse_mode: "HTML"
+        })
+      });
+
+      const result = await telegramResponse.json();
+
+      if (!telegramResponse.ok || !result.ok) {
+        console.error("Telegram error:", result);
+
+        return json({
+          ok: false,
+          error: "ارسال پیام انجام نشد."
+        }, 502);
+      }
+
+      return json({
+        ok: true,
+        message: "پیام شما با موفقیت ارسال شد."
+      });
+
+    } catch (error) {
+      console.error(error);
+
+      return json({
+        ok: false,
+        error: "خطایی در پردازش درخواست رخ داد."
+      }, 500);
+    }
+  }
+};
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=UTF-8"
+    }
+  });
+}
+
+function escapeHTML(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+const HTML = `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ارسال پیام</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Tahoma,
+    Arial,
+    sans-serif;
+  color: #f7f9ff;
+  background:
+    radial-gradient(circle at 15% 15%, rgba(0,152,234,.20), transparent 30%),
+    radial-gradient(circle at 85% 85%, rgba(124,58,237,.18), transparent 30%),
+    #070a12;
+}
+
+.card {
+  width: 100%;
+  max-width: 520px;
+  padding: 30px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 28px;
+  background: rgba(17,22,35,.76);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  box-shadow: 0 30px 90px rgba(0,0,0,.45);
+}
+
+.logo {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 20px;
+  border-radius: 20px;
+  background: linear-gradient(145deg,#11aaf7,#007bc5);
+  box-shadow: 0 12px 30px rgba(0,152,234,.28);
+  font-size: 28px;
+  font-weight: 800;
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.description {
+  margin: 10px 0 25px;
+  color: #8790a5;
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  color: #cbd2df;
+  font-size: 13px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 15px;
+  outline: none;
+  background: rgba(255,255,255,.045);
+  color: #fff;
+  padding: 14px 15px;
+  font: inherit;
+  transition: .2s;
+}
+
+input {
+  height: 52px;
+}
+
+textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus {
+  border-color: rgba(0,152,234,.7);
+  box-shadow: 0 0 0 3px rgba(0,152,234,.10);
+}
+
+.field {
+  margin-bottom: 17px;
+}
+
+.honeypot {
+  position: absolute;
+  left: -9999px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+button {
+  width: 100%;
+  height: 55px;
+  border: 0;
+  border-radius: 16px;
+  cursor: pointer;
+  color: white;
+  font-size: 15px;
+  font-weight: 750;
+  background: linear-gradient(135deg,#0098ea,#007bc7);
+  box-shadow: 0 12px 28px rgba(0,152,234,.22);
+  transition: .2s;
+}
+
+button:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.status {
+  min-height: 24px;
+  margin-top: 16px;
+  text-align: center;
+  color: #8790a5;
+  font-size: 13px;
+}
+
+.footer {
+  margin-top: 22px;
+  padding-top: 17px;
+  border-top: 1px solid rgba(255,255,255,.07);
+  text-align: center;
+  color: #626c80;
+  font-size: 11px;
+}
+
+@media(max-width:500px) {
+  body {
+    padding: 12px;
+  }
+
+  .card {
+    padding: 22px;
+    border-radius: 24px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+
+  <div class="logo">✉</div>
+
+  <h1>ارسال پیام</h1>
+
+  <div class="description">
+    پیام خود را وارد کنید و مستقیماً برای ما ارسال کنید.
+  </div>
+
+  <form id="form">
+
+    <div class="field">
+      <label for="name">نام</label>
+      <input
+        id="name"
+        name="name"
+        maxlength="100"
+        placeholder="نام شما"
+        autocomplete="name"
+        required
+      >
+    </div>
+
+    <div class="field">
+      <label for="message">پیام</label>
+      <textarea
+        id="message"
+        name="message"
+        maxlength="3000"
+        placeholder="پیام خود را بنویسید..."
+        required
+      ></textarea>
+    </div>
+
+    <!-- Honeypot -->
+    <input
+      class="honeypot"
+      type="text"
+      name="website"
+      tabindex="-1"
+      autocomplete="off"
+    >
+
+    <button id="submit" type="submit">
+      ارسال پیام
+    </button>
+
+    <div class="status" id="status"></div>
+
+  </form>
+
+  <div class="footer">
+    پیام شما به‌صورت امن ارسال می‌شود.
+  </div>
+
+</div>
+
+<script>
+const form = document.getElementById("form");
+const button = document.getElementById("submit");
+const status = document.getElementById("status");
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  button.disabled = true;
+  button.textContent = "در حال ارسال...";
+  status.textContent = "";
+
+  const payload = {
+    name: document.getElementById("name").value,
+    message: document.getElementById("message").value,
+    website: document.querySelector('[name="website"]').value
+  };
+
+  try {
+    const response = await fetch("/send", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+
+    if (!result.ok) {
+      throw new Error(result.error || "خطا در ارسال");
+    }
+
+    status.textContent = result.message;
+    form.reset();
+
+  } catch (error) {
+    status.textContent =
+      error.message || "ارسال پیام انجام نشد.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "ارسال پیام";
+  }
+});
+</script>
+
+</body>
+</html>`;
